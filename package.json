@@ -1,0 +1,14 @@
+{
+  "name": "reverse-proxy",
+  "version": "1.0.0",
+  "description": "A reverse proxy written in NodeJS",
+  "main": "proxy.js",
+  "author": "bennyzen <benny.zaminga@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "cli-color": "^2.0.0",
+    "clui": "^0.3.6",
+    "http-message-parser": "^0.0.34"
+  }
+}
