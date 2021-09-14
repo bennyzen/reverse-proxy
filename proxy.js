@@ -5,9 +5,48 @@ TODO
 
 const net = require('net')
 const parse = require('http-message-parser')
-// const clui = require('clui')
+const geoip = require('geoip-lite')
+
+let totalConnections = 0
+let socketErrorsServer = 0
+let socketErrorsClient = 0
+let lookupsTotal = 0
+let lookupErrors = 0
+let lookupsGeoIp = 0
+
+// ui
+const blessed = require('blessed')
+const contrib = require('blessed-contrib')
 // const chalk = require('chalk')
 // const figures, { replaceSymbols, mainSymbols } = require('figures')
+const screen = blessed.screen({
+    label: 'NodeReverseProxy',
+})
+let grid = new contrib.grid({
+    rows: 10,
+    cols: 10,
+    screen
+})
+let stats = grid.set(0,0,5,5, contrib.table, {
+    label: 'Stats',
+    keys: false,
+    interactive: false,
+    fg: 'white',
+    columnWidth: [20,10],
+})
+let map = grid.set(0,5,5,5, contrib.map, {
+    label: 'Server Locations',
+})
+let logs = grid.set(5,0,5,10, contrib.log, {
+    label: 'Logs',
+    fg: 'white',
+    selectedFg: 'white',
+})
+screen.key(['escape', 'q', 'C-c'], function (ch, key) {
+    return process.exit(0);
+})
+screen.render()
+
 
 const server = net.createServer()
 
@@ -15,9 +54,8 @@ const IP = '0.0.0.0'
 const PORT = 8080
 
 server.on('connection', async (clientSock)=>{
-    await server.getConnections((err, count)=>{
-        console.log(err ? err : `\n->o Client #${count} connected`)
-    })
+    totalConnections++
+    updateStats()
     // client Sock (from client to proxy)
     clientSock.once('data', (data)=>{
         const headers = parse(data)
@@ -31,55 +69,58 @@ server.on('connection', async (clientSock)=>{
             `${headers.url.split(':')[0]}` : 
             host = headers.headers.Host
 
-        console.log(`->o Client asking for ${host} on port ${port}`)
+        logs.log(`➤♡ Client asking for ${host} on port ${port}`)
     
         // // serverSock (from proxy to destination)
         let serverSock = net.createConnection({ host, port },
             () => {
-                console.log('o-> socket to destination established')
+                logs.log('♡➤ socket to destination established')
             }
         )
 
         serverSock.on('lookup',(err, address, family, host)=>{
+            lookupsTotal++
             // check for 0.0.0.0 as DNS answer (no resolution or blocked)
             if (address == '0.0.0.0') {
-                console.log(`DNS resolution for ${host} not possible. Exiting`)
+                lookupErrors++
+                logs.log(`DNS resolution for ${host} blocked. Ignoring ...`)
                 serverSock.end()
                 return
             }
-            console.log(err ? 
-                `o-> DNSLookup Error ${err}` : 
-                `o-> DNS Lookup ${host} over IPv${family} resolves to ${address}`
+            geoIp(address)
+            logs.log(err ? 
+                `♡➤ DNSLookup Error ${err}` :
+                `♡➤ DNS Lookup ${host} over IPv${family} resolves to ${address}`
             )
         })
 
         serverSock.on('error',err=>{
-            console.log('o-> serverSock',err)
+            logs.log('♡➤ serverSock',err)
         })
 
         clientSock.on('error', (err)=>{
-            console.log('->o clientSock Error: ', err)
+            logs.log('-♡o clientSock Error: ', err)
         })
 
         serverSock.on('end', ()=>{
-            console.log('serverSock end')
+            logs.log('serverSock end')
         })
     
         // asking
         if (isTLS) {
             clientSock.write('HTTP/1.1 200 OK\r\n\n')
-            console.log('o-> using HTTPS')
+            logs.log('♡➤ using HTTPS')
         } else {
             serverSock.write(data)
-            console.log('o-> using HTTP')
+            logs.log('♡➤ using HTTP')
         }
 
-        clientSock.on('drain',()=>{
-            console.log('<-o clientSock drained')
-        })
+        // clientSock.on('drain',()=>{
+        //     console.log('<-o clientSock drained')
+        // })
 
         serverSock.on('drain',()=>{
-            console.log('o<- serverSock drained')
+            logs.log('♡◀ serverSock drained')
         })
 
         // piping answers
@@ -89,13 +130,50 @@ server.on('connection', async (clientSock)=>{
 })
 
 server.on('close', ()=>{
-    console.log('Client disconnected')
+    logs.log('Client disconnected')
 })
 
 server.on('error', (err)=>{
-    console.log('An error has occurred', err)
+    socketErrorsServer++
+    logs.log('An error has occurred', err)
 })
 
-server.listen({ host: IP, port: PORT },
-    ()=>console.log(`Server listening on ${IP}:${PORT}`)
-)
+server.listen({ host: IP, port: PORT }, () =>{
+    socketErrorsClient++
+    logs.log(`Server listening on ${IP}:${PORT}`)
+})
+
+async function updateStats() {
+    await server.getConnections((err, count) => {
+        logs.log(err ? err : `\n➤♡ Client #${count} connected`)
+        let memory = process.memoryUsage().heapUsed / 1024 / 1024
+        stats.setData({
+            headers: ['Property','Value'],
+            data: [
+                ['Active connections', count],
+                ['Total connections', totalConnections],
+                ['Memory usage', `${Math.round(memory*100)/100} MB`],
+                ['Server socket err', socketErrorsServer],
+                ['Client socket err', socketErrorsClient],
+                ['DNS Lookups', lookupsTotal],
+                ['DNS Failures', lookupErrors],
+                ['GeoIP Lookups', lookupsGeoIp],
+            ],
+        })
+    })
+}
+
+function geoIp(ip) {
+    let pos = geoip.lookup(ip)
+    // only mark on map if we have coords
+    if (!!pos && !!pos.ll) {
+        lookupsGeoIp++
+        map.addMarker({
+            lon: pos.ll[1],
+            lat: pos.ll[0],
+            color: 'white',
+            char: '★',
+        })
+        logs.log(`♡  GeoIP ${ip} in ${pos.region} ${pos.country} ${pos.city}`)
+    }
+}
