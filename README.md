@@ -1,6 +1,8 @@
 # reverse-proxy
 A simple reverse-proxy written in NodeJS with a minimalistic terminal UI.
 
+![image](https://user-images.githubusercontent.com/13304/133279854-629690fc-b802-4135-b033-86761e8c866c.png)
+
 ## Usage
 ```
 yarn
